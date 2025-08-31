@@ -40,10 +40,11 @@ let
     else
       {};
 
+
   # Create the overlay function for a given plan.json
-  createOverlay = planJsonPath: baseDir:
+  createOverlay = planJsonPath: baseDir: cab2nixOutCache:
     let
-      packageInfos = parsePlanJson planJsonPath;
+      packageInfos = planJsonPath: parsePlanJson planJsonPath;
     in
       # Return an overlay function that creates a completely fresh package set
       hself: hsuper:
@@ -78,13 +79,15 @@ let
                       #
                       # But really, everything shouldn't be marked dontCheck.
                       haskell.lib.compose.dontCheck
-                        (hself.callHackage pname version cabal2nixArgs);
+                        # (hself.callHackage pname version cabal2nixArgs);
+                        (hself.callPackage "${cab2nixOutCache}/${pname}-${version}.nix" cabal2nixArgs);
                   }
                 else if isBootPackage then
                   # Keep GHC boot packages from base set - these are essential
                   { name = pname; value = hsuper.${pname}; }
                 else
                   # Keep other packages from base set
+                  # TODO: We should actually be handling this case
                   { name = pname; value = hsuper.${pname} or null; }
             ) packageInfos
           );
@@ -102,12 +105,49 @@ let
           # Plan packages take precedence over boot packages if both are present
           essentialBootPackages // planPackages;
 
+  cabal2nixOutputCacheComputed = planJsonPath: hself:
+    let
+      packageInfos = parsePlanJson planJsonPath;
+
+      pkgToCab2nixOutput =
+        pkgInfo:
+          if !pkgInfo.isLocal && pkgInfo.isFromHackage then
+            { name = pkgInfo.name;
+            , version = pkgsInfo.version;
+              cabal2nixOutput =
+                let
+                  cabal2nixArgs = getAdditionalCabal2nixArgs pkgInfo.name pkgInfo.version;
+                in
+                  # (hself.callHackage pkgInfo.name pkgInfo.version cabal2nixArgs);
+                  # (hself.haskellSrc2nix "${cab2nixOutCache}/${pkgInfo.name}-${pkgInfo.version}.nix" cabal2nixArgs);
+                  hself.haskellSrc2nix { name = pkgInfo.name; src = pkgInfo.src; };
+            }
+          else null;
+
+      hackagePackagesCab2nixOutput = builtins.filter (p: p != null) (map pkgToCab2nixOutput packageInfos);
+    in
+      runCommand "testtesttest" {}
+        ''
+          mkdir -p "$out"
+        '' +
+        (lib.concatMapStrings
+          ({name, version, cabal2nixOutput}: ''
+            cp "${cabal2nixOutput}/default.nix" "$out/${name}-${version}.nix"
+          '')
+          hackagePackagesCab2nixOutput
+        );
 
   # Main cabalPlan2nix function - returns an object with overridePackageSet method
   cabalPlan2nix = planJsonPath: baseDir:
     {
       # Expose the overlay function for direct use
-      overlay = createOverlay planJsonPath baseDir;
+      overlay =
+        createOverlay
+          planJsonPath
+          baseDir
+          (if cabal2nixOutputCache != null then cabal2nixOutputCache else cabal2nixOutputCacheComputed planJsonPath);
+
+      xxx = cabal2nixOutputCacheComputed planJsonPath hself;
     };
 
 in

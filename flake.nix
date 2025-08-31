@@ -26,6 +26,7 @@
       {
         packages = {
           example = haskellPackages.example;
+          default = self.packages.${system}.example;
         };
 
         devShells.default = pkgs.mkShell {
